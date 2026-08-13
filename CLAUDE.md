@@ -6,7 +6,7 @@ Guidance for Claude Code when working in this repository.
 
 **Token Dashboard** — a local dashboard for tracking Claude Code token usage, costs, and session history. Reads the JSONL transcripts Claude Code writes to `~/.claude/projects/` and turns them into per-prompt cost analytics, tool/file heatmaps, subagent attribution, cache analytics, project comparisons, and a rule-based tips engine.
 
-Inspired by [phuryn/claude-usage](https://github.com/phuryn/claude-usage) but diverges in UI (vanilla JS + ECharts, dark theme, hash router, SSE refresh) and scope (expensive-prompt drill-down, skills view, tips engine, streaming-snapshot dedup). See `docs/inspiration.md` for the original's feature set and known limitations.
+Forked from [nateherkai/token-dashboard](https://github.com/nateherkai/token-dashboard) (itself inspired by [phuryn/claude-usage](https://github.com/phuryn/claude-usage)); now maintained by GatorByte Studios at [EffuSignups/token-dashboard](https://github.com/EffuSignups/token-dashboard). Diverges from the original claude-usage in UI (vanilla JS + ECharts, dark theme, hash router, SSE refresh) and scope (expensive-prompt drill-down, skills view, tips engine, streaming-snapshot dedup). See `docs/inspiration.md` for the original's feature set and known limitations.
 
 ## Status
 

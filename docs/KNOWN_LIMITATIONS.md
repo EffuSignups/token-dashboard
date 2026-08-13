@@ -6,7 +6,7 @@ None of these are blockers — the dashboard still gives you useful information.
 
 The Skills route shows every skill Claude Code invoked, how many times, across how many sessions, and when. The **tokens-per-call** column is populated only for skills whose `SKILL.md` lives under `~/.claude/skills/`, `~/.claude/scheduled-tasks/`, or `~/.claude/plugins/`. Skills registered elsewhere (project-local `.claude/skills/`, or invocations that go through the `Task` tool with a skill-shaped `subagent_type`) show invocation counts but leave the token column blank.
 
-It's still a useful view — you can see which skills dominate your session time — just don't expect a complete per-skill token cost. PRs to broaden the catalog scan welcome.
+It's still a useful view — you can see which skills dominate your session time — just don't expect a complete per-skill token cost. Broadening the catalog scan to cover project-local skills is on the list (see P2 in Tracker/token-dashboard.md).
 
 ## Cost for Pro / Max / Max-20x users is shown as API-equivalent, not subscription value
 

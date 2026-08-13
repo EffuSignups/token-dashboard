@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for considering a contribution! This is a small, stdlib-only Python project — easy to run, easy to change.
+This is a small, stdlib-only Python project — easy to run, easy to change. Internal GatorByte Studios notes on working in this repo.
 
 ## Running the tests
 
@@ -30,14 +30,17 @@ Open http://127.0.0.1:8080 in your browser. The server re-scans every 30 seconds
 
 Component layout: `cli.py` (entry points) → `token_dashboard/scanner.py` (JSONL → SQLite) → `token_dashboard/db.py` (query helpers) → `token_dashboard/server.py` (HTTP + SSE + `/api/*` routes) → `web/` (vanilla JS UI). See [`CLAUDE.md`](CLAUDE.md) for the short architecture overview. To add a new API route: add a handler branch in `token_dashboard/server.py`, put the SQL in a helper in `token_dashboard/db.py`, and add a test under `tests/`.
 
-## Opening a pull request
+## Making a change
 
-1. Fork the repo.
-2. Create a branch: `git checkout -b feat/<short-description>` or `fix/<short-description>`.
-3. Make the change. Add or update tests.
-4. Run `python3 -m unittest discover tests` — must be green.
-5. Commit with a conventional-commit-style message: `feat: add X`, `fix: handle Y`, `docs: update Z`.
-6. Push and open a PR against `main`. Describe the user-visible change and link to any relevant issue.
+This is a private GatorByte Studios fork — not accepting outside PRs. For our own changes:
+
+1. Branch: `git checkout -b feat/<short-description>` or `fix/<short-description>`.
+2. Make the change. Add or update tests.
+3. Run `python3 -m unittest discover tests` — must be green.
+4. Commit with a conventional-commit-style message: `feat: add X`, `fix: handle Y`, `docs: update Z`.
+5. Merge to `main` and ship via the usual VPS deploy flow.
+
+Upstream fixes from `nateherkai/token-dashboard` can still be pulled in manually: `git fetch upstream && git log upstream/main`.
 
 ## Ideas that would genuinely help
 
