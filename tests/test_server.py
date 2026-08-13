@@ -49,6 +49,27 @@ class ServerTests(unittest.TestCase):
         self.assertIn("sessions", body)
         self.assertEqual(body["sessions"], 1)
 
+    def test_overview_surfaces_unpriced_models(self):
+        with sqlite3.connect(self.db) as c:
+            c.execute("INSERT INTO messages (uuid, parent_uuid, session_id, project_slug, type, timestamp, model, input_tokens, output_tokens, cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens) VALUES ('a2','u','s','p','assistant','2026-04-19T00:00:02Z','totally-unknown-model',100,50,0,0,0)")
+            c.commit()
+        body = json.loads(self._get("/api/overview"))
+        self.assertIn("unpriced", body)
+        models = [u["model"] for u in body["unpriced"]]
+        self.assertIn("totally-unknown-model", models)
+        # priced models must NOT appear in the unpriced list
+        self.assertNotIn("claude-haiku-4-5", models)
+
+    def test_prompts_cost_uses_full_usage(self):
+        # haiku turn: 1 in + 1 out -> (1*1 + 1*5)/1e6, NOT cache-read-only (0)
+        body = json.loads(self._get("/api/prompts?limit=10"))
+        self.assertEqual(len(body), 1)
+        self.assertAlmostEqual(body[0]["estimated_cost_usd"], 6 / 1_000_000, places=10)
+
+    def test_prompts_respects_since(self):
+        body = json.loads(self._get("/api/prompts?since=2027-01-01T00:00:00Z"))
+        self.assertEqual(body, [])
+
     def test_prompts_json(self):
         body = json.loads(self._get("/api/prompts?limit=10"))
         self.assertIsInstance(body, list)

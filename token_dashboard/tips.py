@@ -2,10 +2,20 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Optional
 
 from .db import connect
+from .pricing import load_pricing
+
+_PRICING_JSON = Path(__file__).resolve().parent.parent / "pricing.json"
+
+
+def _utcnow_iso() -> str:
+    # naive UTC ISO string — matches the "...Z"-style timestamps in the DB
+    # for lexical comparison (datetime.utcnow() is deprecated on 3.12+)
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 def _iso_days_ago(today_iso: str, n: int) -> str:
@@ -35,7 +45,7 @@ def dismiss_tip(db_path, key: str) -> None:
 
 
 def cache_discipline_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
-    today_iso = today_iso or datetime.utcnow().isoformat()
+    today_iso = today_iso or _utcnow_iso()
     since = _iso_days_ago(today_iso, 7)
     sql = """
       SELECT project_slug,
@@ -66,7 +76,7 @@ def cache_discipline_tips(db_path, today_iso: Optional[str] = None) -> List[dict
 
 
 def repeated_target_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
-    today_iso = today_iso or datetime.utcnow().isoformat()
+    today_iso = today_iso or _utcnow_iso()
     since = _iso_days_ago(today_iso, 7)
     out = []
     with connect(db_path) as c:
@@ -106,7 +116,7 @@ def repeated_target_tips(db_path, today_iso: Optional[str] = None) -> List[dict]
 
 
 def right_size_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
-    today_iso = today_iso or datetime.utcnow().isoformat()
+    today_iso = today_iso or _utcnow_iso()
     since = _iso_days_ago(today_iso, 7)
     sql = """
       SELECT COUNT(*) AS n,
@@ -121,8 +131,11 @@ def right_size_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
         row = c.execute(sql, (since,)).fetchone()
     if not row or (row["n"] or 0) < 10:
         return []
-    api_opus   = ((row["in_tok"] or 0) * 15 + (row["out_tok"] or 0) * 75) / 1_000_000
-    api_sonnet = ((row["in_tok"] or 0) *  3 + (row["out_tok"] or 0) * 15) / 1_000_000
+    # rates from pricing.json — single source of truth, never hardcode
+    tiers = load_pricing(_PRICING_JSON)["tier_fallback"]
+    opus_r, sonnet_r = tiers["opus"], tiers["sonnet"]
+    api_opus   = ((row["in_tok"] or 0) * opus_r["input"]   + (row["out_tok"] or 0) * opus_r["output"])   / 1_000_000
+    api_sonnet = ((row["in_tok"] or 0) * sonnet_r["input"] + (row["out_tok"] or 0) * sonnet_r["output"]) / 1_000_000
     savings = api_opus - api_sonnet
     if savings < 1.0:
         return []
@@ -138,7 +151,7 @@ def right_size_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
 
 
 def outlier_tips(db_path, today_iso: Optional[str] = None) -> List[dict]:
-    today_iso = today_iso or datetime.utcnow().isoformat()
+    today_iso = today_iso or _utcnow_iso()
     since = _iso_days_ago(today_iso, 7)
     out = []
     with connect(db_path) as c:

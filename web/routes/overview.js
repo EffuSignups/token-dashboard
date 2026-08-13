@@ -79,6 +79,7 @@ export default async function (root) {
         ${planSubtitle()}
       </div>
     </div>
+    ${unpricedWarning(totals.unpriced)}
 
     <details class="card glossary" style="margin-top:16px">
       <summary><h3 style="display:inline-block;margin:0">What do these numbers mean?</h3><span class="muted" style="font-size:12px">— click to expand</span></summary>
@@ -186,6 +187,18 @@ export default async function (root) {
     values: topTools.map(t => t.calls),
     color: '#7C5CFF',
   });
+}
+
+function unpricedWarning(unpriced) {
+  if (!unpriced || !unpriced.length) return '';
+  const rows = unpriced.map(u =>
+    `<b>${fmt.htmlSafe(u.model)}</b> (${fmt.int(u.turns)} turns, ${fmt.compact(u.tokens)} tokens)`
+  ).join(' · ');
+  return `
+    <div class="card" style="margin-top:12px;border:1px solid #E8A23B;background:rgba(232,162,59,0.08)">
+      <div style="font-size:13px;color:#E8A23B"><b>⚠ Unpriced models excluded from Est. cost:</b> ${rows}
+      — add them to <code>pricing.json</code>.</div>
+    </div>`;
 }
 
 function planSubtitle() {

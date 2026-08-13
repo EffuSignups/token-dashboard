@@ -20,16 +20,34 @@ class CostTests(unittest.TestCase):
 
     def test_known_opus_input_cost(self):
         c = cost_for("claude-opus-4-7", self._u(input_tokens=1_000_000), self.p)
-        self.assertAlmostEqual(c["usd"], 15.00, places=4)
+        self.assertAlmostEqual(c["usd"], 5.00, places=4)
         self.assertFalse(c["estimated"])
 
     def test_known_sonnet_output_cost(self):
         c = cost_for("claude-sonnet-4-6", self._u(output_tokens=1_000_000), self.p)
         self.assertAlmostEqual(c["usd"], 15.00, places=4)
 
+    def test_known_fable_input_cost(self):
+        c = cost_for("claude-fable-5", self._u(input_tokens=1_000_000), self.p)
+        self.assertAlmostEqual(c["usd"], 10.00, places=4)
+        self.assertFalse(c["estimated"])
+
+    def test_current_lineup_all_exact(self):
+        # every model in current heavy rotation must price EXACTLY, not tier-guess
+        for model in ("claude-fable-5", "claude-opus-5", "claude-opus-4-8",
+                      "claude-sonnet-5", "claude-haiku-4-5-20251001"):
+            c = cost_for(model, self._u(input_tokens=1_000), self.p)
+            self.assertIsNotNone(c["usd"], model)
+            self.assertFalse(c["estimated"], model)
+
     def test_unknown_opus_falls_back(self):
         c = cost_for("claude-opus-9-9-experimental", self._u(input_tokens=1_000_000), self.p)
-        self.assertAlmostEqual(c["usd"], 15.00, places=4)
+        self.assertAlmostEqual(c["usd"], 5.00, places=4)
+        self.assertTrue(c["estimated"])
+
+    def test_unknown_fable_falls_back(self):
+        c = cost_for("claude-fable-9-experimental", self._u(input_tokens=1_000_000), self.p)
+        self.assertAlmostEqual(c["usd"], 10.00, places=4)
         self.assertTrue(c["estimated"])
 
     def test_unknown_unparseable_returns_none(self):

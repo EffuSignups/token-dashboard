@@ -202,28 +202,36 @@ def overview_totals(db_path, since=None, until=None) -> dict:
         return dict(c.execute(sql, args).fetchone())
 
 
-def expensive_prompts(db_path, limit: int = 50, sort: str = "tokens") -> list:
+def expensive_prompts(db_path, limit: int = 50, sort: str = "tokens",
+                      since=None, until=None) -> list:
     """User prompt joined with the immediately-following assistant turn's tokens.
 
     sort="tokens" (default) → largest billable first.
     sort="recent"           → newest first.
+    Returns the full usage split so callers can price the prompt correctly
+    (input + output + cache-create + cache-read), not just one component.
     """
     order = "u.timestamp DESC" if sort == "recent" else "billable_tokens DESC"
+    rng, args = _range_clause(since, until, col="u.timestamp")
     sql = f"""
       SELECT u.uuid AS user_uuid, u.session_id, u.project_slug, u.timestamp,
              u.prompt_text, u.prompt_chars,
              a.uuid AS assistant_uuid, a.model,
+             COALESCE(a.input_tokens,0)           AS input_tokens,
+             COALESCE(a.output_tokens,0)          AS output_tokens,
+             COALESCE(a.cache_create_5m_tokens,0) AS cache_create_5m_tokens,
+             COALESCE(a.cache_create_1h_tokens,0) AS cache_create_1h_tokens,
              COALESCE(a.input_tokens,0)+COALESCE(a.output_tokens,0)
                +COALESCE(a.cache_create_5m_tokens,0)+COALESCE(a.cache_create_1h_tokens,0) AS billable_tokens,
              COALESCE(a.cache_read_tokens,0) AS cache_read_tokens
         FROM messages u
         JOIN messages a ON a.parent_uuid = u.uuid AND a.type='assistant'
-       WHERE u.type='user' AND u.prompt_text IS NOT NULL
+       WHERE u.type='user' AND u.prompt_text IS NOT NULL {rng}
        ORDER BY {order}
        LIMIT ?
     """
     with connect(db_path) as c:
-        return [dict(r) for r in c.execute(sql, (limit,))]
+        return [dict(r) for r in c.execute(sql, (*args, limit))]
 
 
 def project_summary(db_path, since=None, until=None) -> list:

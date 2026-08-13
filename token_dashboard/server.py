@@ -91,21 +91,35 @@ def build_handler(db_path: str, projects_dir: str):
             if path == "/api/overview":
                 totals = overview_totals(db_path, since, until)
                 cost_usd = 0.0
+                unpriced = []  # never drop a model silently — surface it
                 for m in model_breakdown(db_path, since, until):
                     c = cost_for(m["model"], m, pricing)
                     if c["usd"] is not None:
                         cost_usd += c["usd"]
+                    else:
+                        tokens = (
+                            m["input_tokens"] + m["output_tokens"]
+                            + m["cache_create_5m_tokens"] + m["cache_create_1h_tokens"]
+                        )
+                        if tokens > 0:
+                            unpriced.append({
+                                "model": m["model"], "turns": m["turns"], "tokens": tokens,
+                            })
                 totals["cost_usd"] = round(cost_usd, 4)
+                totals["unpriced"] = unpriced
                 return _send_json(self, totals)
             if path == "/api/prompts":
                 limit = _clamp_limit(qs.get("limit", ["50"])[0], 50)
                 sort = qs.get("sort", ["tokens"])[0]
-                rows = expensive_prompts(db_path, limit=limit, sort=sort)
+                rows = expensive_prompts(db_path, limit=limit, sort=sort,
+                                         since=since, until=until)
                 for r in rows:
                     c = cost_for(r["model"], {
-                        "input_tokens": 0, "output_tokens": 0,
+                        "input_tokens": r["input_tokens"],
+                        "output_tokens": r["output_tokens"],
                         "cache_read_tokens": r["cache_read_tokens"],
-                        "cache_create_5m_tokens": 0, "cache_create_1h_tokens": 0,
+                        "cache_create_5m_tokens": r["cache_create_5m_tokens"],
+                        "cache_create_1h_tokens": r["cache_create_1h_tokens"],
                     }, pricing)
                     r["estimated_cost_usd"] = c["usd"]
                 return _send_json(self, rows)
