@@ -112,9 +112,14 @@ def _migrate_add_message_id(conn) -> None:
 
 @contextmanager
 def connect(path: Union[str, Path]):
-    conn = sqlite3.connect(path)
+    # timeout: a long scan holds the write lock for minutes on a cold catch-up;
+    # without it every concurrent API read dies with "database is locked".
+    # WAL lets readers proceed while the scanner writes.
+    conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     try:
         yield conn
     finally:
