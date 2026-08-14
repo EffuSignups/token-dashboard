@@ -6,17 +6,17 @@ import time
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-from .db import connect
+from .db import connect, local_box
 
 
 INSERT_MSG = """
 INSERT OR REPLACE INTO messages (
-  uuid, parent_uuid, session_id, project_slug, cwd, git_branch, cc_version, entrypoint,
+  uuid, box, parent_uuid, session_id, project_slug, cwd, git_branch, cc_version, entrypoint,
   type, is_sidechain, agent_id, timestamp, model, stop_reason, prompt_id, message_id,
   input_tokens, output_tokens, cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens,
   prompt_text, prompt_chars, tool_calls_json
 ) VALUES (
-  :uuid, :parent_uuid, :session_id, :project_slug, :cwd, :git_branch, :cc_version, :entrypoint,
+  :uuid, :box, :parent_uuid, :session_id, :project_slug, :cwd, :git_branch, :cc_version, :entrypoint,
   :type, :is_sidechain, :agent_id, :timestamp, :model, :stop_reason, :prompt_id, :message_id,
   :input_tokens, :output_tokens, :cache_read_tokens, :cache_create_5m_tokens, :cache_create_1h_tokens,
   :prompt_text, :prompt_chars, :tool_calls_json
@@ -24,8 +24,8 @@ INSERT OR REPLACE INTO messages (
 """
 
 INSERT_TOOL = """
-INSERT INTO tool_calls (message_uuid, session_id, project_slug, tool_name, target, result_tokens, is_error, timestamp)
-VALUES (:message_uuid, :session_id, :project_slug, :tool_name, :target, :result_tokens, :is_error, :timestamp)
+INSERT INTO tool_calls (box, message_uuid, session_id, project_slug, tool_name, target, result_tokens, is_error, timestamp)
+VALUES (:box, :message_uuid, :session_id, :project_slug, :tool_name, :target, :result_tokens, :is_error, :timestamp)
 """
 
 
@@ -122,12 +122,13 @@ def _extract_results(rec: dict) -> List[dict]:
     return out
 
 
-def parse_record(rec: dict, project_slug: str) -> Tuple[dict, List[dict]]:
+def parse_record(rec: dict, project_slug: str, box: Optional[str] = None) -> Tuple[dict, List[dict]]:
     """Return (message_row, [tool_call_rows])."""
     msg_obj = rec.get("message") or {}
     text, chars = _prompt_text(rec)
     msg = {
         "uuid":         rec.get("uuid"),
+        "box":          box or local_box(),
         "parent_uuid":  rec.get("parentUuid"),
         "session_id":   rec.get("sessionId"),
         "project_slug": project_slug,
@@ -158,6 +159,7 @@ def parse_record(rec: dict, project_slug: str) -> Tuple[dict, List[dict]]:
         t["message_uuid"] = msg["uuid"]
         t["session_id"]   = msg["session_id"]
         t["project_slug"] = project_slug
+        t["box"]          = msg["box"]
     return msg, tools
 
 
@@ -184,7 +186,8 @@ def _evict_prior_snapshots(conn, session_id: str, message_id: str, keep_uuid: st
     conn.execute(f"DELETE FROM messages WHERE uuid IN ({placeholders})", old)
 
 
-def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
+def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0,
+              box: Optional[str] = None) -> dict:
     """Ingest new lines from a JSONL file starting at ``start_byte``.
 
     Returns message/tool counts plus ``end_offset`` — the byte offset just
@@ -193,6 +196,7 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
     once it completes.
     """
     msgs = tools = 0
+    box = box or local_box()
     end_offset = start_byte
     with open(path, "rb") as fb:
         if start_byte:
@@ -223,7 +227,7 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
             if not isinstance(rec, dict) or "uuid" not in rec or "type" not in rec:
                 end_offset = line_end
                 continue
-            msg, tlist = parse_record(rec, project_slug)
+            msg, tlist = parse_record(rec, project_slug, box=box)
             if not msg["session_id"] or not msg["timestamp"]:
                 end_offset = line_end
                 continue
@@ -242,11 +246,13 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
     return {"messages": msgs, "tools": tools, "end_offset": end_offset}
 
 
-def scan_dir(projects_root: Union[str, Path], db_path: Union[str, Path]) -> dict:
+def scan_dir(projects_root: Union[str, Path], db_path: Union[str, Path],
+             box: Optional[str] = None) -> dict:
     root = Path(projects_root)
     totals = {"messages": 0, "tools": 0, "files": 0}
     if not root.is_dir():
         return totals
+    box = box or local_box()
     with connect(db_path) as conn:
         for p in root.rglob("*.jsonl"):
             try:
@@ -262,7 +268,7 @@ def scan_dir(projects_root: Union[str, Path], db_path: Union[str, Path]) -> dict
             if row and stat.st_size > row["bytes_read"]:
                 offset = row["bytes_read"]
             slug = _project_slug(p, root)
-            sub = scan_file(p, slug, conn, start_byte=offset)
+            sub = scan_file(p, slug, conn, start_byte=offset, box=box)
             # Persist the byte offset of the last fully-parsed line (not
             # st_size) so a partial line mid-flush is retried on the next
             # scan instead of being skipped over.

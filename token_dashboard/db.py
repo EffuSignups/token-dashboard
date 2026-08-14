@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE TABLE IF NOT EXISTS messages (
   uuid                    TEXT PRIMARY KEY,
+  box                     TEXT NOT NULL DEFAULT '',
   parent_uuid             TEXT,
   session_id              TEXT NOT NULL,
   project_slug            TEXT NOT NULL,
@@ -47,9 +49,11 @@ CREATE INDEX IF NOT EXISTS idx_messages_project   ON messages(project_slug);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_model     ON messages(model);
 CREATE INDEX IF NOT EXISTS idx_messages_msgid     ON messages(session_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_box       ON messages(box);
 
 CREATE TABLE IF NOT EXISTS tool_calls (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  box           TEXT    NOT NULL DEFAULT '',
   message_uuid  TEXT    NOT NULL,
   session_id    TEXT    NOT NULL,
   project_slug  TEXT    NOT NULL,
@@ -79,11 +83,21 @@ def default_db_path() -> Path:
     return Path.home() / ".claude" / "token-dashboard.db"
 
 
+def local_box() -> str:
+    """This box's name for the `box` column.
+
+    Launch scripts set TOKEN_DASHBOARD_BOX (BMF/LMF/VPS); hostname is only a
+    fallback so an env-less run never writes an empty namespace.
+    """
+    return os.environ.get("TOKEN_DASHBOARD_BOX") or platform.node() or "unknown"
+
+
 def init_db(path: Union[str, Path]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as c:
         _migrate_add_message_id(c)
+        _migrate_add_box(c)
         c.executescript(SCHEMA)
 
 
@@ -110,6 +124,27 @@ def _migrate_add_message_id(conn) -> None:
     conn.commit()
 
 
+def _migrate_add_box(conn) -> None:
+    """Add the box column to pre-multibox DBs and backfill with this box's name.
+
+    Why: existing rows were all scanned locally, so the local box name is the
+    correct namespace for every one of them. No wipe needed — data is intact.
+    """
+    box = local_box()
+    for table in ("messages", "tool_calls"):
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if not has_table:
+            continue
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "box" in cols:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN box TEXT NOT NULL DEFAULT ''")
+        conn.execute(f"UPDATE {table} SET box=? WHERE box=''", (box,))
+    conn.commit()
+
+
 @contextmanager
 def connect(path: Union[str, Path]):
     # timeout: a long scan holds the write lock for minutes on a cold catch-up;
@@ -126,13 +161,28 @@ def connect(path: Union[str, Path]):
         conn.close()
 
 
-def _range_clause(since, until, col: str = "timestamp"):
+def _range_clause(since, until, col: str = "timestamp", box=None, box_col: str = "box"):
     where, args = [], []
     if since:
         where.append(f"{col} >= ?"); args.append(since)
     if until:
         where.append(f"{col} < ?"); args.append(until)
+    if box:
+        where.append(f"{box_col} = ?"); args.append(box)
     return ((" AND " + " AND ".join(where)) if where else "", args)
+
+
+def boxes(db_path) -> list:
+    """Distinct box names with row counts, busiest first."""
+    sql = """
+      SELECT box, COUNT(*) AS rows
+        FROM messages
+       WHERE box != ''
+       GROUP BY box
+       ORDER BY rows DESC
+    """
+    with connect(db_path) as c:
+        return [dict(r) for r in c.execute(sql)]
 
 
 def _encode_slug(path: str) -> str:
@@ -191,8 +241,8 @@ def best_project_name(cwds, slug: str) -> str:
     return project_name_for(cwds[0] if cwds else None, slug)
 
 
-def overview_totals(db_path, since=None, until=None) -> dict:
-    rng, args = _range_clause(since, until)
+def overview_totals(db_path, since=None, until=None, box=None) -> dict:
+    rng, args = _range_clause(since, until, box=box)
     sql = f"""
       SELECT COUNT(DISTINCT session_id) AS sessions,
              SUM(CASE WHEN type='user' THEN 1 ELSE 0 END) AS turns,
@@ -208,7 +258,7 @@ def overview_totals(db_path, since=None, until=None) -> dict:
 
 
 def expensive_prompts(db_path, limit: int = 50, sort: str = "tokens",
-                      since=None, until=None) -> list:
+                      since=None, until=None, box=None) -> list:
     """User prompt joined with the immediately-following assistant turn's tokens.
 
     sort="tokens" (default) → largest billable first.
@@ -217,7 +267,7 @@ def expensive_prompts(db_path, limit: int = 50, sort: str = "tokens",
     (input + output + cache-create + cache-read), not just one component.
     """
     order = "u.timestamp DESC" if sort == "recent" else "billable_tokens DESC"
-    rng, args = _range_clause(since, until, col="u.timestamp")
+    rng, args = _range_clause(since, until, col="u.timestamp", box=box, box_col="u.box")
     sql = f"""
       SELECT u.uuid AS user_uuid, u.session_id, u.project_slug, u.timestamp,
              u.prompt_text, u.prompt_chars,
@@ -239,8 +289,8 @@ def expensive_prompts(db_path, limit: int = 50, sort: str = "tokens",
         return [dict(r) for r in c.execute(sql, (*args, limit))]
 
 
-def project_summary(db_path, since=None, until=None) -> list:
-    rng, args = _range_clause(since, until)
+def project_summary(db_path, since=None, until=None, box=None) -> list:
+    rng, args = _range_clause(since, until, box=box)
     sql = f"""
       SELECT project_slug,
              COUNT(DISTINCT session_id) AS sessions,
@@ -266,8 +316,8 @@ def project_summary(db_path, since=None, until=None) -> list:
     return rows
 
 
-def tool_token_breakdown(db_path, since=None, until=None) -> list:
-    rng, args = _range_clause(since, until)
+def tool_token_breakdown(db_path, since=None, until=None, box=None) -> list:
+    rng, args = _range_clause(since, until, box=box)
     sql = f"""
       SELECT tool_name,
              COUNT(*) AS calls,
@@ -281,8 +331,8 @@ def tool_token_breakdown(db_path, since=None, until=None) -> list:
         return [dict(r) for r in c.execute(sql, args)]
 
 
-def recent_sessions(db_path, limit: int = 20, since=None, until=None) -> list:
-    rng, args = _range_clause(since, until)
+def recent_sessions(db_path, limit: int = 20, since=None, until=None, box=None) -> list:
+    rng, args = _range_clause(since, until, box=box)
     sql = f"""
       SELECT session_id, project_slug,
              MIN(timestamp) AS started, MAX(timestamp) AS ended,
@@ -324,9 +374,9 @@ def session_turns(db_path, session_id: str) -> list:
         return [dict(r) for r in c.execute(sql, (session_id,))]
 
 
-def daily_token_breakdown(db_path, since=None, until=None) -> list:
+def daily_token_breakdown(db_path, since=None, until=None, box=None) -> list:
     """One row per day: stacked bar data for input/output/cache_read/cache_create."""
-    rng, args = _range_clause(since, until)
+    rng, args = _range_clause(since, until, box=box)
     sql = f"""
       SELECT substr(timestamp, 1, 10) AS day,
              COALESCE(SUM(input_tokens),0)      AS input_tokens,
@@ -343,7 +393,7 @@ def daily_token_breakdown(db_path, since=None, until=None) -> list:
         return [dict(r) for r in c.execute(sql, args)]
 
 
-def skill_breakdown(db_path, since=None, until=None) -> list:
+def skill_breakdown(db_path, since=None, until=None, box=None) -> list:
     """Per-skill invocation counts, distinct sessions, last-used timestamp.
 
     Token attribution per skill is not included: in Claude Code, a Skill's
@@ -354,7 +404,7 @@ def skill_breakdown(db_path, since=None, until=None) -> list:
     invocation row) could enable precise attribution; for now we only expose
     the reliable counts.
     """
-    rng, args = _range_clause(since, until)
+    rng, args = _range_clause(since, until, box=box)
     sql = f"""
       SELECT target AS skill,
              COUNT(*) AS invocations,
@@ -369,9 +419,9 @@ def skill_breakdown(db_path, since=None, until=None) -> list:
         return [dict(r) for r in c.execute(sql, args)]
 
 
-def model_breakdown(db_path, since=None, until=None) -> list:
+def model_breakdown(db_path, since=None, until=None, box=None) -> list:
     """Per-model token totals + turn count. Caller computes cost via pricing."""
-    rng, args = _range_clause(since, until)
+    rng, args = _range_clause(since, until, box=box)
     sql = f"""
       SELECT COALESCE(model, 'unknown') AS model,
              COUNT(*) AS turns,

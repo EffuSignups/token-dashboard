@@ -1,0 +1,51 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="multi-box" id="td-multibox">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" page="1" pageWidth="1100" pageHeight="700">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="bmf" value="BMF (Windows, no scheduled tasks)" style="rounded=1;fillColor=#dae8fc;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="300" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="bmf-jsonl" value="~/.claude/projects/*.jsonl" style="rounded=0;fillColor=#ffffff" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="180" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="bmf-hook" value="Claude Code SessionEnd hook&#10;(the no-decision trigger)" style="rounded=0;fillColor=#ffe6cc" vertex="1" parent="1">
+          <mxGeometry x="60" y="130" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="bmf-push" value="export-push.ps1&#10;scan → delta export → spool → scp&#10;(15-min debounce, retry on fail)" style="rounded=0;fillColor=#ffffff" vertex="1" parent="1">
+          <mxGeometry x="60" y="190" width="220" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lmf" value="LMF — identical lane (export-push.sh)" style="rounded=1;fillColor=#dae8fc;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="300" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="vps" value="VPS (always-on, :8080 systemd)" style="rounded=1;fillColor=#d5e8d4;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="470" y="40" width="360" height="420" as="geometry" />
+        </mxCell>
+        <mxCell id="vps-inbox" value="_scratch/token-dashboard-inbox/&#10;td-&lt;box&gt;-&lt;ts&gt;.json.gz" style="rounded=0;fillColor=#ffffff" vertex="1" parent="1">
+          <mxGeometry x="500" y="90" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="vps-loop" value="server 30s scan loop&#10;scan own JSONL (box=VPS)&#10;+ sweep inbox (ingest, delete on success)" style="rounded=0;fillColor=#ffe6cc" vertex="1" parent="1">
+          <mxGeometry x="500" y="160" width="250" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="vps-db" value="token-dashboard.db&#10;messages/tool_calls + box column&#10;(uuid PK — boxes never collide)" style="shape=cylinder3;fillColor=#ffffff" vertex="1" parent="1">
+          <mxGeometry x="520" y="250" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="vps-ui" value="UI :8080 behind SSO&#10;box selector (all / BMF / LMF / VPS)&#10;?box= on every /api route" style="rounded=0;fillColor=#ffffff" vertex="1" parent="1">
+          <mxGeometry x="500" y="370" width="250" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="bmf-jsonl" target="bmf-hook"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="bmf-hook" target="bmf-push"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" value="scp (BMF→VPS ssh lane)" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="bmf-push" target="vps-inbox"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" value="scp" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="lmf" target="vps-inbox"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="vps-inbox" target="vps-loop"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="vps-loop" target="vps-db"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle" edge="1" parent="1" source="vps-db" target="vps-ui"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

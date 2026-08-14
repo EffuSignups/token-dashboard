@@ -24,12 +24,16 @@ export const fmt = {
 };
 
 export async function api(path, opts) {
+  // Box filter rides on every API GET; endpoints without a box concept ignore it.
+  if (state.box && path.startsWith('/api/') && !(opts && opts.method)) {
+    path += (path.includes('?') ? '&' : '?') + 'box=' + encodeURIComponent(state.box);
+  }
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
   return r.json();
 }
 
-export const state = { plan: 'api', pricing: null };
+export const state = { plan: 'api', pricing: null, box: localStorage.getItem('td.box') || '' };
 
 const ROUTES = {
   '/overview': () => import('/web/routes/overview.js'),
@@ -50,10 +54,28 @@ function buildTopbar() {
       ${Object.keys(ROUTES).map(p => `<a href="#${p}" data-route="${p}">${p.slice(1)}</a>`).join('')}
     </nav>
     <div class="spacer"></div>
+    <select id="box-select" class="pill" style="display:none" title="Filter by box"></select>
     <span class="pill" id="plan-pill">api</span>
     <span class="pill muted" title="Cmd/Ctrl+B blurs sensitive text">⌘B blur</span>
   `;
   document.body.prepend(wrap);
+}
+
+async function initBoxSelect() {
+  let info;
+  try { info = await api('/api/boxes'); } catch { return; }
+  const names = (info.boxes || []).map(b => b.box);
+  if (names.length < 2) { state.box = ''; return; }  // single-box: no selector
+  if (state.box && !names.includes(state.box)) state.box = '';
+  const sel = $('#box-select');
+  sel.innerHTML = `<option value="">all boxes</option>` +
+    names.map(b => `<option value="${fmt.htmlSafe(b)}"${b === state.box ? ' selected' : ''}>${fmt.htmlSafe(b)}</option>`).join('');
+  sel.style.display = '';
+  sel.addEventListener('change', () => {
+    state.box = sel.value;
+    localStorage.setItem('td.box', state.box);
+    render();
+  });
 }
 
 function setActiveTab(routeKey) {
@@ -110,6 +132,7 @@ async function boot() {
   state.plan = planResp.plan;
   state.pricing = planResp.pricing;
   $('#plan-pill').textContent = state.plan;
+  await initBoxSelect();
 
   await firstRun();
 

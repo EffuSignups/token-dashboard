@@ -14,10 +14,12 @@ from .db import (
     overview_totals, expensive_prompts, project_summary,
     tool_token_breakdown, recent_sessions, session_turns,
     daily_token_breakdown, model_breakdown, skill_breakdown,
+    boxes, local_box,
 )
 from .pricing import load_pricing, cost_for, get_plan, set_plan
 from .tips import all_tips, dismiss_tip
 from .scanner import scan_dir
+from .ingest import sweep_inbox
 from .skills import cached_catalog
 
 
@@ -84,15 +86,18 @@ def build_handler(db_path: str, projects_dir: str):
             path = url.path
             since = qs.get("since", [None])[0]
             until = qs.get("until", [None])[0]
+            box = qs.get("box", [None])[0] or None
             if path in ("/", "/index.html"):
                 return _serve_static(self, "index.html")
             if path.startswith("/web/"):
                 return _serve_static(self, path[5:])
+            if path == "/api/boxes":
+                return _send_json(self, {"local": local_box(), "boxes": boxes(db_path)})
             if path == "/api/overview":
-                totals = overview_totals(db_path, since, until)
+                totals = overview_totals(db_path, since, until, box=box)
                 cost_usd = 0.0
                 unpriced = []  # never drop a model silently — surface it
-                for m in model_breakdown(db_path, since, until):
+                for m in model_breakdown(db_path, since, until, box=box):
                     c = cost_for(m["model"], m, pricing)
                     if c["usd"] is not None:
                         cost_usd += c["usd"]
@@ -112,7 +117,7 @@ def build_handler(db_path: str, projects_dir: str):
                 limit = _clamp_limit(qs.get("limit", ["50"])[0], 50)
                 sort = qs.get("sort", ["tokens"])[0]
                 rows = expensive_prompts(db_path, limit=limit, sort=sort,
-                                         since=since, until=until)
+                                         since=since, until=until, box=box)
                 for r in rows:
                     c = cost_for(r["model"], {
                         "input_tokens": r["input_tokens"],
@@ -124,25 +129,25 @@ def build_handler(db_path: str, projects_dir: str):
                     r["estimated_cost_usd"] = c["usd"]
                 return _send_json(self, rows)
             if path == "/api/projects":
-                return _send_json(self, project_summary(db_path, since, until))
+                return _send_json(self, project_summary(db_path, since, until, box=box))
             if path == "/api/tools":
-                return _send_json(self, tool_token_breakdown(db_path, since, until))
+                return _send_json(self, tool_token_breakdown(db_path, since, until, box=box))
             if path == "/api/sessions":
                 return _send_json(self, recent_sessions(
                     db_path, limit=_clamp_limit(qs.get("limit", ["20"])[0], 20),
-                    since=since, until=until,
+                    since=since, until=until, box=box,
                 ))
             if path == "/api/daily":
-                return _send_json(self, daily_token_breakdown(db_path, since, until))
+                return _send_json(self, daily_token_breakdown(db_path, since, until, box=box))
             if path == "/api/skills":
-                rows = skill_breakdown(db_path, since, until)
+                rows = skill_breakdown(db_path, since, until, box=box)
                 catalog = cached_catalog()
                 for r in rows:
                     info = catalog.get(r["skill"])
                     r["tokens_per_call"] = info["tokens"] if info else None
                 return _send_json(self, rows)
             if path == "/api/by-model":
-                rows = model_breakdown(db_path, since, until)
+                rows = model_breakdown(db_path, since, until, box=box)
                 for r in rows:
                     c = cost_for(r["model"], r, pricing)
                     r["cost_usd"] = c["usd"]
@@ -204,10 +209,17 @@ def build_handler(db_path: str, projects_dir: str):
     return H
 
 
-def _scan_loop(db_path: str, projects_dir: str, interval: float = 30.0):
+def _scan_loop(db_path: str, projects_dir: str, interval: float = 30.0,
+               inbox_dir: str = None):
     while True:
         try:
             n = scan_dir(projects_dir, db_path)
+            if inbox_dir:
+                m = sweep_inbox(db_path, inbox_dir)
+                n = dict(n)
+                n["messages"] += m["messages"]
+                n["tools"] += m["tool_calls"]
+                n["ingested_files"] = m["files"]
             if n["messages"] > 0:
                 EVENTS.put({"type": "scan", "n": n, "ts": time.time()})
         except Exception as e:
@@ -215,8 +227,9 @@ def _scan_loop(db_path: str, projects_dir: str, interval: float = 30.0):
         time.sleep(interval)
 
 
-def run(host: str, port: int, db_path: str, projects_dir: str):
-    threading.Thread(target=_scan_loop, args=(db_path, projects_dir), daemon=True).start()
+def run(host: str, port: int, db_path: str, projects_dir: str, inbox_dir: str = None):
+    threading.Thread(target=_scan_loop, args=(db_path, projects_dir, 30.0, inbox_dir),
+                     daemon=True).start()
     H = build_handler(db_path, projects_dir)
     httpd = http.server.ThreadingHTTPServer((host, port), H)
     httpd.serve_forever()
